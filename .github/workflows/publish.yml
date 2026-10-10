@@ -1,0 +1,102 @@
+name: Publish to Maven Central
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Upstream GenAI version (without v)'
+        required: true
+        default: '0.17.0'
+      onnxruntime_version:
+        description: 'Matching ONNX Runtime dependency version'
+        required: true
+        default: '1.28.0'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-${{ inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ inputs.version }}
+      ORT_VERSION: ${{ inputs.onnxruntime_version }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+          gpg-private-key: ${{ secrets.GPG_SIGNING_KEY }}
+
+      - name: Download and prepare artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          [[ "$ORT_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          ARTIFACT="onnxruntime-genai-$VERSION"
+          DEST="target/bundle/io/github/inference4j/onnxruntime-genai/$VERSION"
+          mkdir -p "$DEST" target/upstream target/sources target/javadoc
+          gh api "repos/microsoft/onnxruntime-genai/releases/tags/v$VERSION" > target/release.json
+          URL=$(jq -er --arg name "$ARTIFACT.jar" '.assets[] | select(.name == $name) | .browser_download_url' target/release.json)
+          DIGEST=$(jq -er --arg name "$ARTIFACT.jar" '.assets[] | select(.name == $name) | .digest' target/release.json)
+          [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          curl --fail --silent --show-error --location --retry 3 "$URL" -o "$DEST/$ARTIFACT.jar"
+          [[ "$(sha256sum "$DEST/$ARTIFACT.jar" | cut -d ' ' -f1)" == "${DIGEST#sha256:}" ]]
+          curl --fail --silent --show-error --location --retry 3 \
+            "https://github.com/microsoft/onnxruntime-genai/archive/refs/tags/v$VERSION.tar.gz" \
+            -o target/source.tar.gz
+          tar xzf target/source.tar.gz -C target/upstream --strip-components=1
+          [[ "$(cat target/upstream/VERSION_INFO)" == "$VERSION" ]]
+          for dir in target/upstream/src/java/src/main/java target/upstream/src/java/src/main/jvm; do
+            if [[ -d "$dir" ]]; then cp -R "$dir/." target/sources/; fi
+          done
+          cp target/upstream/LICENSE target/sources/
+          find target/sources -name '*.java' > target/java-sources.txt
+          test -s target/java-sources.txt
+          javadoc -quiet -Xdoclint:none -encoding UTF-8 -classpath "$DEST/$ARTIFACT.jar" \
+            -d target/javadoc @target/java-sources.txt
+          cp target/upstream/LICENSE target/javadoc/
+          jar --create --file "$DEST/$ARTIFACT-sources.jar" -C target/sources .
+          jar --create --file "$DEST/$ARTIFACT-javadoc.jar" -C target/javadoc .
+          sed -e "s/@VERSION@/$VERSION/g" -e "s/@ORT_VERSION@/$ORT_VERSION/g" \
+            pom.xml > "$DEST/$ARTIFACT.pom"
+
+      - name: Sign and bundle
+        env:
+          GPG_PASSPHRASE: ${{ secrets.GPG_SIGNING_PASSPHRASE }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "target/bundle/io/github/inference4j/onnxruntime-genai/$VERSION"
+          for file in *.jar *.pom; do
+            printf '%s' "$GPG_PASSPHRASE" | gpg --batch --yes --pinentry-mode loopback \
+              --passphrase-fd 0 --armor --detach-sign "$file"
+            md5sum "$file" | cut -d ' ' -f1 > "$file.md5"
+            sha1sum "$file" | cut -d ' ' -f1 > "$file.sha1"
+          done
+          cd "$GITHUB_WORKSPACE/target/bundle"
+          zip -qr ../central-bundle.zip io
+
+      - name: Submit to Sonatype for automatic publication
+        env:
+          CENTRAL_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          CENTRAL_PASSWORD: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          TOKEN=$(printf '%s:%s' "$CENTRAL_USERNAME" "$CENTRAL_PASSWORD" | base64 -w0)
+          echo "::add-mask::$TOKEN"
+          ID=$(curl --fail --silent --show-error --request POST \
+            --header "Authorization: Bearer $TOKEN" \
+            --form 'bundle=@target/central-bundle.zip' \
+            'https://central.sonatype.com/api/v1/publisher/upload?publishingType=AUTOMATIC')
+          echo "Submitted Sonatype deployment: $ID"
+          echo "Submitted **$VERSION** for automatic publication. Deployment: \`$ID\`. Check [Sonatype](https://central.sonatype.com/publishing/deployments) for validation and publication status." >> "$GITHUB_STEP_SUMMARY"
