@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Publication metadata template; the workflow substitutes the two version tokens. -->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>io.github.inference4j</groupId>
+  <artifactId>onnxruntime-genai</artifactId>
+  <version>@VERSION@</version>
+  <packaging>jar</packaging>
+  <name>ONNX Runtime GenAI</name>
+  <description>Community redistribution of Microsoft's official ONNX Runtime GenAI Java release JAR.</description>
+  <url>https://github.com/inference4j/onnxruntime-genai-maven</url>
+  <licenses>
+    <license>
+      <name>MIT License</name>
+      <url>https://opensource.org/licenses/MIT</url>
+    </license>
+  </licenses>
+  <developers>
+    <developer>
+      <id>inference4j</id>
+      <name>inference4j contributors</name>
+      <url>https://github.com/inference4j</url>
+    </developer>
+  </developers>
+  <scm>
+    <connection>scm:git:https://github.com/microsoft/onnxruntime-genai.git</connection>
+    <developerConnection>scm:git:ssh://git@github.com/microsoft/onnxruntime-genai.git</developerConnection>
+    <url>https://github.com/microsoft/onnxruntime-genai</url>
+    <tag>v@VERSION@</tag>
+  </scm>
+  <dependencies>
+    <dependency>
+      <groupId>com.microsoft.onnxruntime</groupId>
+      <artifactId>onnxruntime</artifactId>
+      <version>@ORT_VERSION@</version>
+      <scope>runtime</scope>
+    </dependency>
+  </dependencies>
+</project>
